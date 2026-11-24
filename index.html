@@ -45,6 +45,12 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* --- SCROLLBAR CUSTOM --- */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
 /* --- SIDEBAR --- */
 #sidebar {
   width: var(--sidebar-width);
@@ -198,7 +204,6 @@ textarea::placeholder { color: var(--text-muted); }
       if (jsonMatch) {
         var fileData = JSON.parse(jsonMatch[1]);
         if (fileData.file && fileData.content) {
-          // Render penjelasan di luar JSON
           var textBefore = text.substring(0, jsonMatch.index).trim();
           if (textBefore) {
             var span = document.createElement('span');
@@ -206,10 +211,8 @@ textarea::placeholder { color: var(--text-muted); }
             el.appendChild(span);
           }
           
-          // Render File Card
           var card = document.createElement('div');
           card.className = 'file-card';
-          
           var info = document.createElement('div');
           info.className = 'file-info';
           info.innerHTML = `<div class="file-name">
@@ -237,42 +240,45 @@ textarea::placeholder { color: var(--text-muted); }
           card.appendChild(btn);
           el.appendChild(card);
           
-          // Render sisa teks setelah JSON
           var textAfter = text.substring(jsonMatch.index + jsonMatch[0].length).trim();
           if (textAfter) {
             var span2 = document.createElement('span');
             span2.innerHTML = '<br>' + textAfter.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
             el.appendChild(span2);
           }
-          return; // Selesai
+          return;
         }
       }
-    } catch(e) {
-      console.warn("Gagal parse JSON file:", e);
-      // Lanjut ke render teks biasa jika gagal
-    }
+    } catch(e) { console.warn("Gagal parse JSON file:", e); }
 
-    // 2. Render teks biasa jika bukan format file
+    // 2. Fallback: Deteksi jika AI mengirim blok kode markdown biasa
     var parts = String(text).split('```');
     for(var i = 0; i < parts.length; i++){
       var part = parts[i];
-      
       if(i % 2 === 0){
         if(part) {
           var span = document.createElement('span');
-          span.innerHTML = part
-            .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
-            .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-            .replace(/`(.*?)`/g, '<code style="background:var(--surface);padding:2px 4px;border-radius:4px;font-family:monospace;font-size:13px">$1</code>');
+          span.innerHTML = part.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>').replace(/`(.*?)`/g, '<code style="background:var(--surface);padding:2px 4px;border-radius:4px;font-family:monospace;font-size:13px">$1</code>');
           el.appendChild(span);
         }
         continue;
       }
       
-      // Fallback: Jika AI tetap mengirim kode mentah, buat kartu file darurat
+      // Deteksi nama file dari baris pertama blok kode (misal: "html index.html")
       var nl = part.indexOf('\n');
+      var firstLine = (nl >= 0 ? part.slice(0, nl) : '').trim();
       var code = (nl >= 0 ? part.slice(nl + 1) : part).replace(/\n$/, '');
+      
       var fileName = "kode_" + Math.random().toString(36).slice(2,6) + ".txt";
+      if (firstLine) {
+        if (firstLine.includes('.')) {
+          fileName = firstLine.replace(/[\/\*\/]/g, '').trim(); 
+        } else {
+          var extMap = {'js':'js','javascript':'js','ts':'ts','typescript':'ts','html':'html','css':'css','py':'py','python':'py','c':'c','cpp':'cpp','c++':'cpp','h':'h','cs':'cs','csharp':'cs','java':'java','rs':'rs','rust':'rs','lua':'lua','json':'json','sql':'sql','sh':'sh','bash':'sh'};
+          var ext = extMap[firstLine.toLowerCase()];
+          if (ext) fileName = "kode." + ext;
+        }
+      }
 
       var card = document.createElement('div');
       card.className = 'file-card';
