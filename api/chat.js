@@ -40,16 +40,21 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'userId, sessionId, dan message wajib' });
   }
 
-  try {
-    // 1. Simpan fakta mentah: setiap pesan user disimpan ke list per userId.
-    const factsKey = `facts:${userId}`;
-    await redis.lpush(factsKey, message);
-    await redis.ltrim(factsKey, 0, 199); // batasi 200 fakta terakhir
+    try {
+    // 1. Filter: hanya simpan jika pesan mengandung pola pernyataan, bukan pertanyaan.
+    //    Ini filter sederhana; bisa diperluas nanti.
+    if (!message.trim().endsWith('?') && !/^(apa|siapa|kapan|dimana|mengapa|bagaimana|berapa)\b/i.test(message.trim())) {
+      const factsKey = `facts:${userId}`;
+      await redis.lpush(factsKey, message);
+      await redis.ltrim(factsKey, 0, 199);
+    }
 
-    // 2. Muat fakta yang tersimpan, sertakan sebagai konteks tambahan.
+    // 2. Muat fakta. Karena lpush menaruh yang terbaru di indeks 0, kita TIDAK perlu reverse().
+    //    Kita ambil 50 terbaru, lalu balik urutannya agar yang paling baru muncul di akhir (paling dekat dengan prompt user).
+    const factsKey = `facts:${userId}`;
     const facts = await redis.lrange(factsKey, 0, 49);
     const factsBlock = facts.length
-      ? "Fakta yang pengguna pernah sampaikan:\n" + facts.reverse().map(f => "- " + f).join("\n")
+      ? "Fakta yang pengguna pernah sampaikan (dari yang terlama ke terbaru):\n" + facts.reverse().map(f => "- " + f).join("\n")
       : "";
 
     // 3. Muat riwayat chat dari AgentKit.
@@ -58,13 +63,13 @@ export default async function handler(req, res) {
     const priorMessages = saved ? saved.messages : [];
     const fullMessages = [...priorMessages, { role: 'user', content: message }];
 
-    // 4. Panggil model dengan fakta sebagai bagian dari system prompt.
+    // 4. Panggil model.
     const result = await generateText({
       model: pollinations.chatModel("openai"),
       system: SYSTEM + (factsBlock ? "\n\n" + factsBlock : ""),
       messages: fullMessages,
     });
-
+      
     // 5. Simpan riwayat percakapan.
     const finalMessages = [...fullMessages, { role: 'assistant', content: result.text }];
     await history.saveChat({ userId, sessionId, messages: finalMessages, title: 'Aero Chat' });
