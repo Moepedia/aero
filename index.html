@@ -250,32 +250,56 @@ textarea::placeholder { color: var(--text-muted); }
 #send:hover { opacity: 0.9; }
 #send:disabled { opacity: 0.3; cursor: default; }
 
-/* --- CODE BLOCK & FORMATTING --- */
-.msg pre {
+/* --- CODE BLOCK / FILE ATTACHMENT --- */
+.file-card {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
+  padding: 12px 16px;
   margin: 16px 0;
-  padding: 16px;
-  overflow-x: auto;
-  white-space: pre-wrap;
-  font: 13px/1.6 ui-monospace, Consolas, monospace;
-  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
 }
-.msg .copy {
-  position: absolute;
-  top: 8px;
-  right: 8px;
+.file-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  overflow: hidden;
+}
+.file-name {
+  font-weight: 600;
+  font-size: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text);
+}
+.file-meta {
   font-size: 12px;
-  padding: 4px 10px;
+  color: var(--text-muted);
+  display: flex;
+  gap: 8px;
+}
+.btn-download {
   background: var(--bg);
   border: 1px solid var(--border);
+  color: var(--text);
+  padding: 8px 16px;
   border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 500;
   cursor: pointer;
-  color: var(--text-muted);
-  transition: background 0.2s;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.2s;
+  white-space: nowrap;
 }
-.msg .copy:hover { background: var(--surface); }
+.btn-download:hover {
+  background: var(--surface-hover);
+}
 .msg strong { font-weight: 600; color: var(--text); }
 </style>
 </head>
@@ -340,56 +364,85 @@ textarea::placeholder { color: var(--text-muted); }
     if(hint){ hint.remove(); hint = null; }
     var d = document.createElement('div');
     d.className = 'msg ' + cls;
-    // Format markdown dasar untuk error
     d.innerHTML = text.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
     log.appendChild(d);
     log.scrollTop = log.scrollHeight;
     return d;
   }
 
+  // Fungsi Render Baru: Mengubah blok kode menjadi File Card yang bisa didownload
   function render(el, text){
     el.textContent = '';
     if(!text) return;
     
-    // Split code blocks
     var parts = String(text).split('```');
     for(var i = 0; i < parts.length; i++){
       var part = parts[i];
       
       if(i % 2 === 0){
-        // Format teks biasa dengan markdown dasar (bold, dll)
         if(part) {
           var span = document.createElement('span');
           span.innerHTML = part
-            .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;") // escape HTML
-            .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>') // bold
-            .replace(/`(.*?)`/g, '<code style="background:var(--surface);padding:2px 4px;border-radius:4px;font-family:monospace;font-size:13px">$1</code>'); // inline code
+            .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+            .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+            .replace(/`(.*?)`/g, '<code style="background:var(--surface);padding:2px 4px;border-radius:4px;font-family:monospace;font-size:13px">$1</code>');
           el.appendChild(span);
         }
         continue;
       }
       
-      // Code block
-      var newlineIndex = part.indexOf('\n');
-      var code = newlineIndex === -1 ? part : part.slice(newlineIndex + 1);
-      if(code.endsWith('\n')) code = code.slice(0, -1);
+      // Proses Blok Kode
+      var nl = part.indexOf('\n');
+      var firstLine = (nl >= 0 ? part.slice(0, nl) : '').trim();
+      var code = (nl >= 0 ? part.slice(nl + 1) : part).replace(/\n$/, '');
       
-      var pre = document.createElement('pre');
+      // Coba tebak nama file dari baris pertama (misal: "js filename.js" atau "// filename.js")
+      var fileName = "kode_" + Math.random().toString(36).slice(2,6) + ".txt";
+      var lang = "Teks";
+      
+      if (firstLine) {
+        if (firstLine.includes('.')) {
+          fileName = firstLine.replace(/[\/\*\/]/g, '').trim(); 
+        } else {
+          var extMap = {'js':'js','javascript':'js','ts':'ts','typescript':'ts','html':'html','css':'css','py':'py','python':'py','c':'c','cpp':'cpp','c++':'cpp','h':'h','cs':'cs','csharp':'cs','java':'java','rs':'rs','rust':'rs','lua':'lua','json':'json','sql':'sql','sh':'sh','bash':'sh'};
+          var ext = extMap[firstLine.toLowerCase()];
+          if (ext) { fileName = "kode." + ext; lang = firstLine.toUpperCase(); }
+        }
+      }
+      
+      if (fileName === "kode.txt" && code.length > 0) {
+          if (code.startsWith('<!DOCTYPE') || code.startsWith('<html')) { fileName = "index.html"; lang = "HTML"; }
+          else if (code.includes('import ') && code.includes('export default')) { fileName = "api.js"; lang = "JavaScript"; }
+      }
+
+      // Buat File Card UI
+      var card = document.createElement('div');
+      card.className = 'file-card';
+      
+      var info = document.createElement('div');
+      info.className = 'file-info';
+      info.innerHTML = `<div class="file-name">📄 ${fileName}</div>
+                        <div class="file-meta"><span>${lang}</span><span>${code.length} chars</span></div>`;
+      
       var btn = document.createElement('button');
-      btn.type = 'button'; btn.className = 'copy'; btn.textContent = 'Salin';
+      btn.className = 'btn-download';
+      btn.innerHTML = '⬇️ Unduh';
+      btn.onclick = function() {
+        var blob = new Blob([code], {type: 'text/plain'});
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement('a');
+        a.href = url;
+        a.download = fileName;
+        a.click();
+        URL.revokeObjectURL(url);
+        
+        btn.innerHTML = '✅ Terunduh';
+        setTimeout(() => btn.innerHTML = '⬇️ Unduh', 2000);
+      };
       
-      btn.addEventListener('click', function(c){
-        return function(){
-          navigator.clipboard.writeText(c).then(
-            function(){ btn.textContent = 'Tersalin!'; setTimeout(function(){ btn.textContent = 'Salin'; }, 2000); },
-            function(){ btn.textContent = 'Gagal'; setTimeout(function(){ btn.textContent = 'Salin'; }, 2000); }
-          );
-        };
-      }(code));
-      
-      pre.appendChild(btn);
-      pre.appendChild(document.createTextNode(code));
-      el.appendChild(pre);
+      card.appendChild(info);
+      card.appendChild(btn);
+      el.appendChild(card);
     }
   }
 
@@ -422,11 +475,8 @@ textarea::placeholder { color: var(--text-muted); }
           
           li.onclick = function(){ 
             loadSession(s.sessionId); 
-            if (window.innerWidth <= 768) {
-              sidebar.classList.add('hidden'); 
-            }
+            if (window.innerWidth <= 768) sidebar.classList.add('hidden');
           };
-          
           sessionList.appendChild(li);
         });
       } else {
@@ -463,10 +513,7 @@ textarea::placeholder { color: var(--text-muted); }
     log.innerHTML = '<p class="hint" id="hint">Percakapan baru dimulai.</p>';
     hint = document.getElementById('hint');
     loadSessions();
-    
-    if (window.innerWidth <= 768) {
-      sidebar.classList.add('hidden');
-    }
+    if (window.innerWidth <= 768) sidebar.classList.add('hidden');
     input.focus();
   };
 
