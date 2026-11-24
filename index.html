@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Aero Chat</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <style>
 :root{color-scheme:light;--bg:#f6f5f1;--surface:#fff;--text:#1c1b19;--muted:#6f6b64;--accent:#c4562b;--user:#efe9df;--border:#e3dfd6;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){color-scheme:dark;--bg:#171614;--surface:#211f1c;--text:#ece9e2;--muted:#9a958b;--accent:#e07a4f;--user:#2c2924;--border:#34312b}}
@@ -40,8 +41,8 @@ footer{text-align:center;color:var(--muted);font-size:12px;padding:0 12px 10px}
 </header>
 <main id="log" aria-live="polite"><p class="hint" id="hint">Tanya apa saja. Enter untuk kirim, Shift+Enter untuk baris baru.</p></main>
 <div id="bar">
-  <button class="ghost" id="attach" type="button" title="Lampirkan file teks">+</button>
-  <input type="file" id="file" multiple hidden accept=".txt,.md,.csv,.json,.log,.xml,.html,.css,.js,.ts,.py,.c,.cpp,.h,.cs,.java,.rs,.lua,.yml,.yaml,.ini,.cfg">
+  <button class="ghost" id="attach" type="button" title="Lampirkan file">+</button>
+  <input type="file" id="file" multiple hidden>
   <textarea id="in" rows="1" placeholder="Tulis pesan…"></textarea>
   <button id="send" type="button">Kirim</button>
 </div>
@@ -102,7 +103,7 @@ footer{text-align:center;color:var(--muted);font-size:12px;padding:0 12px 10px}
     var names=[];
     for(var i=0;i<pending.length;i++){
       names.push(pending[i].name);
-      fullMessage+="\n\n[File: "+pending[i].name+"]\n"+pending[i].text;
+      fullMessage+="\n\n[Lampiran: "+pending[i].name+"]\n"+pending[i].text;
     }
     if(!fullMessage.trim())fullMessage='(lampiran kosong)';
     
@@ -148,23 +149,85 @@ footer{text-align:center;color:var(--muted);font-size:12px;padding:0 12px 10px}
 
   document.getElementById('attach').addEventListener('click',function(){fileIn.click();});
 
-  fileIn.addEventListener('change',async function(){
+  fileIn.addEventListener('change', async function(){
     var files=Array.prototype.slice.call(fileIn.files);fileIn.value='';
+    
     for(var i=0;i<files.length;i++){
       var f=files[i];
-      if(f.size>200000){
-        add('err',f.name+' terlalu besar (maks 200 KB).');
+      if(f.size>5*1024*1024){
+        add('err',f.name+' terlalu besar (maks 5 MB).');
         continue;
       }
-      try{
-        var t=await f.text();
-        if(t.indexOf('\u0000')!==-1){
-          add('err',f.name+' bukan file teks.');
-          continue;
+
+      if(f.name.toLowerCase().endsWith('.zip')){
+        add('user', '📦 Membaca arsip: ' + f.name + '...');
+        try {
+          var zip = await JSZip.loadAsync(f);
+          var combinedText = "";
+          var fileCount = 0;
+          
+          for (var filename in zip.files) {
+            var entry = zip.files[filename];
+            if (entry.dir) continue;
+            if (filename.match(/\.(txt|md|csv|json|log|xml|html|css|js|ts|py|c|cpp|h|cs|java|rs|lua|yml|yaml|ini|cfg|sh|bat|asm|s)$/i)) {
+              var content = await entry.async('string');
+              combinedText += "\n\n[File dalam zip: " + filename + "]\n" + content;
+              fileCount++;
+              if (combinedText.length > 300000) {
+                combinedText += "\n\n[... Arsip terpotong karena terlalu besar ...]";
+                break;
+              }
+            }
+          }
+          if (fileCount > 0) {
+            pending.push({name: f.name + ' (arsip)', text: combinedText});
+            add('user', '✅ Berhasil mengekstrak ' + fileCount + ' file teks dari ' + f.name);
+          } else {
+            add('err', 'Tidak ada file teks yang ditemukan di dalam ' + f.name);
+          }
+        } catch (e) {
+          add('err', 'Gagal membaca zip: ' + e.message);
         }
-        pending.push({name:f.name,text:t});
-        add('user','📎 '+f.name+' (siap dikirim)');
-      }catch(e){add('err','Gagal membaca '+f.name);}
+      } else {
+        try {
+          var buffer = await f.arrayBuffer();
+          var bytes = new Uint8Array(buffer);
+          
+          var isBinary = false;
+          for (var j = 0; j < Math.min(bytes.length, 100); j++) {
+            if (bytes[j] === 0) { isBinary = true; break; }
+          }
+
+          if (isBinary) {
+            var strings = [];
+            var currentStr = "";
+            for (var k = 0; k < bytes.length; k++) {
+              var c = bytes[k];
+              if (c >= 32 && c <= 126) {
+                currentStr += String.fromCharCode(c);
+              } else {
+                if (currentStr.length >= 4) strings.push(currentStr);
+                currentStr = "";
+              }
+            }
+            if (currentStr.length >= 4) strings.push(currentStr);
+            
+            var extracted = strings.join("\n");
+            if (extracted.length > 0) {
+              pending.push({name: f.name + ' (biner)', text: "[Strings yang diekstrak dari file biner " + f.name + "]\n" + extracted});
+              add('user', '🔍 Mengekstrak strings dari biner: ' + f.name);
+            } else {
+              add('err', 'Tidak ada teks yang bisa diekstrak dari ' + f.name);
+            }
+          } else {
+            var textContent = new TextDecoder("utf-8").decode(bytes);
+            pending.push({name: f.name, text: textContent});
+            add('user', '📎 ' + f.name + ' (siap dikirim)');
+          }
+        } catch (e) {
+          add('err', 'Gagal membaca ' + f.name + ': ' + e.message);
+        }
+      }
     }
   });
 
