@@ -146,8 +146,6 @@ footer{text-align:center;color:var(--muted);font-size:12px;padding:0 12px 10px}
   document.getElementById('clear').addEventListener('click',function(){
     if(ctrl)ctrl.abort();
     busy=false;send.disabled=false;
-    // Hapus sessionId agar percakapan baru dimulai dengan konteks kosong.
-    // userId tetap, jadi memori jangka panjang (fakta tentang pengguna) masih terbawa.
     localStorage.removeItem('aero_session_id');
     log.innerHTML='';
     hint=document.createElement('p');hint.className='hint';hint.textContent='Percakapan baru dimulai.';
