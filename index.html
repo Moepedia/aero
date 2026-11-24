@@ -95,27 +95,21 @@ footer{text-align:center;color:var(--muted);font-size:12px;padding:0 12px 10px}
     el.textContent='';
     if(!text) return;
 
-    // Split by triple backticks: even segments are text, odd segments are code blocks
+    // PERBAIKAN: Gunakan backtick utuh, bukan baris baru
     var parts = String(text).split('```');
 
     for(var i=0;i<parts.length;i++){
       var part = parts[i];
 
       if(i%2===0){
-        if(part){
-          el.appendChild(document.createTextNode(part));
-        }
+        if(part) el.appendChild(document.createTextNode(part));
         continue;
       }
 
       var newlineIndex = part.indexOf('\n');
       var code;
-
-      if(newlineIndex === -1){
-        code = part;
-      }else{
-        code = part.slice(newlineIndex + 1);
-      }
+      if(newlineIndex === -1) code = part;
+      else code = part.slice(newlineIndex + 1);
 
       if(code.endsWith('\n')) code = code.slice(0, -1);
 
@@ -127,9 +121,20 @@ footer{text-align:center;color:var(--muted);font-size:12px;padding:0 12px 10px}
 
       btn.addEventListener('click', function(c){
         return function(){
+          // Notifikasi: ubah teks tombol saat tersalin
           navigator.clipboard.writeText(c).then(
-            function(){ btn.textContent='Tersalin'; setTimeout(function(){ btn.textContent='Salin'; }, 1500); },
-            function(){ btn.textContent='Gagal'; }
+            function(){
+              btn.textContent='✅ Tersalin!';
+              btn.style.color='var(--accent)';
+              setTimeout(function(){
+                btn.textContent='Salin';
+                btn.style.color='var(--muted)';
+              }, 2000);
+            },
+            function(){
+              btn.textContent='❌ Gagal';
+              setTimeout(function(){btn.textContent='Salin';}, 2000);
+            }
           );
         };
       }(code));
@@ -140,14 +145,45 @@ footer{text-align:center;color:var(--muted);font-size:12px;padding:0 12px 10px}
     }
   }
 
+  function appendMessage(role, content){
+    var cls = (role === 'user') ? 'user' : 'ai';
+    var box=document.createElement('div');
+    box.className='msg ' + cls;
+    log.appendChild(box);
+    render(box, content || '');
+    log.scrollTop=log.scrollHeight;
+  }
+
+  async function loadHistory(){
+    var ids = getIdentity();
+    try{
+      var resp = await fetch(`/api/history?userId=${encodeURIComponent(ids.userId)}&sessionId=${encodeURIComponent(ids.sessionId)}`);
+      if(!resp.ok) return;
+      var data = await resp.json();
+      var messages = data && data.messages ? data.messages : [];
+
+      if(messages.length){
+        if(hint){hint.remove(); hint=null;}
+        log.innerHTML='';
+        for(var i=0;i<messages.length;i++){
+          var m = messages[i];
+          if(!m || !m.role || !m.content) continue;
+          appendMessage(m.role, m.content);
+        }
+      }
+    }catch(e){
+      // silent fail
+    }
+  }
+
   async function submit(){
     var text=input.value.trim();
     if((!text && !pending.length) || busy) return;
 
     input.value='';
     input.style.height='auto';
-    busy=true;
-    send.disabled=true;
+
+    busy=true; send.disabled=true;
 
     var fullMessage=text;
     var names=[];
@@ -157,10 +193,14 @@ footer{text-align:center;color:var(--muted);font-size:12px;padding:0 12px 10px}
     }
     if(!fullMessage.trim()) fullMessage='(lampiran kosong)';
 
-    add('user', text + (names.length ? (text ? '\n' : '') + '📎 ' + names.join(', ') : ''));
+    appendMessage('user', text + (names.length ? ((text?'\n':'')+'📎 '+names.join(', ')) : ''));
 
     pending=[];
-    var out=add('ai','Berpikir…');
+    var out=document.createElement('div');
+    out.className='msg ai';
+    out.textContent='Berpikir…';
+    log.appendChild(out);
+    log.scrollTop=log.scrollHeight;
 
     var ids=getIdentity();
     var controller=new AbortController();
@@ -171,7 +211,11 @@ footer{text-align:center;color:var(--muted);font-size:12px;padding:0 12px 10px}
         method:'POST',
         headers:{'Content-Type':'application/json'},
         signal:controller.signal,
-        body:JSON.stringify({ userId:ids.userId, sessionId:ids.sessionId, message:fullMessage })
+        body:JSON.stringify({
+          userId: ids.userId,
+          sessionId: ids.sessionId,
+          message: fullMessage
+        })
       });
 
       if(!resp.ok){
@@ -193,12 +237,10 @@ footer{text-align:center;color:var(--muted);font-size:12px;padding:0 12px 10px}
       }
     }
 
-    busy=false;
-    send.disabled=false;
-    input.focus();
+    busy=false; send.disabled=false; input.focus();
   }
 
-  document.getElementById('attach').addEventListener('click',function(){ fileIn.click(); });
+  document.getElementById('attach').addEventListener('click',function(){fileIn.click();});
 
   fileIn.addEventListener('change', async function(){
     var files=Array.prototype.slice.call(fileIn.files);
@@ -278,7 +320,7 @@ footer{text-align:center;color:var(--muted);font-size:12px;padding:0 12px 10px}
             }
           }else{
             var textContent = new TextDecoder("utf-8").decode(bytes);
-            pending.push({name: f.name, text: textContent});
+            pending.push({name:f.name, text:textContent});
             add('user','📎 '+f.name+' (siap dikirim)');
           }
         }catch(e){
@@ -302,13 +344,10 @@ footer{text-align:center;color:var(--muted);font-size:12px;padding:0 12px 10px}
     input.style.height=Math.min(input.scrollHeight,140)+'px';
   });
 
-  document.getElementById('clear').addEventListener('click',function(){
+  document.getElementById('clear').addEventListener('click', function(){
     if(ctrl) ctrl.abort();
 
-    busy=false;
-    send.disabled=false;
-    pending=[];
-
+    busy=false; send.disabled=false; pending=[];
     localStorage.removeItem('aero_session_id');
     localStorage.setItem('aero_session_id', newSessionId());
 
@@ -320,6 +359,8 @@ footer{text-align:center;color:var(--muted);font-size:12px;padding:0 12px 10px}
 
     input.focus();
   });
+
+  loadHistory();
 })();
 </script>
 </body>
