@@ -30,7 +30,7 @@ textarea:focus{outline:2px solid var(--accent);outline-offset:-1px}
 #send:disabled{opacity:.5;cursor:default}
 #attach{font-size:20px;line-height:1;padding:0 14px;border-radius:12px}
 footer{text-align:center;color:var(--muted);font-size:12px;padding:0 12px 10px}
-.msg pre{background:var(--bg);border:1px solid var(--border);border-radius:10px;margin:8px 0;padding:10px 12px;overflow-x:auto;white-space:pre;white-space:pre-wrap;font:13px/1.45 ui-monospace,Consolas,monospace;position:relative}
+.msg pre{background:var(--bg);border:1px solid var(--border);border-radius:10px;margin:8px 0;padding:10px 12px;overflow-x:auto;white-space:pre-wrap;font:13px/1.45 ui-monospace,Consolas,monospace;position:relative}
 .msg .copy{position:absolute;top:6px;right:6px;font-size:12px;padding:2px 8px}
 </style>
 </head>
@@ -91,41 +91,32 @@ footer{text-align:center;color:var(--muted);font-size:12px;padding:0 12px 10px}
     return d;
   }
 
-  // ===== FIX: parsing code block & copy full content =====
   function render(el, text){
     el.textContent='';
     if(!text) return;
 
-    // split by triple backticks, keep even/odd segments: odd segments are code blocks
-    var parts = String(text).split('
-');
+    // Split by triple backticks: even segments are text, odd segments are code blocks
+    var parts = String(text).split('```');
 
     for(var i=0;i<parts.length;i++){
       var part = parts[i];
 
       if(i%2===0){
-        // normal text segment
         if(part){
-          // keep exactly as-is (no trimming that might remove lines)
           el.appendChild(document.createTextNode(part));
         }
         continue;
       }
 
-      // code block segment: can start with "lang\n<code>"
-      // We only want <code>, and we do NOT want to trim lines aggressively.
       var newlineIndex = part.indexOf('\n');
       var code;
 
       if(newlineIndex === -1){
-        code = part; // no newline => entire segment treated as code
+        code = part;
       }else{
-        // if first line looks like language, discard first line only
-        // (e.g. "js\nconsole.log(1)")
         code = part.slice(newlineIndex + 1);
       }
 
-      // Remove ONE trailing newline that often comes from formatting, but do not nuke other lines.
       if(code.endsWith('\n')) code = code.slice(0, -1);
 
       var pre=document.createElement('pre');
