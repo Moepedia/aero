@@ -1,12 +1,15 @@
-import { createChatHistory, createMemoryTools } from "@upstash/agentkit-ai-sdk";
+import { createChatHistory } from "@upstash/agentkit-ai-sdk";
+import { Redis } from "@upstash/redis";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
-import { generateText, stepCountIs } from "ai";
+import { generateText } from "ai";
 
 const pollinations = createOpenAICompatible({
   name: "pollinations",
   baseURL: "https://gen.pollinations.ai/v1",
   apiKey: process.env.POLLINATIONS_API_KEY,
 });
+
+const redis = Redis.fromEnv();
 
 const SYSTEM = [
   "Kamu Aero, senior reverse engineer dan programmer sistem game.",
@@ -27,9 +30,7 @@ export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-  if (!process.env.POLLINATIONS_API_KEY) {
-    return res.status(500).json({ error: 'POLLINATIONS_API_KEY tidak diset' });
-  }
+  if (!process.env.POLLINATIONS_API_KEY) return res.status(500).json({ error: 'POLLINATIONS_API_KEY tidak diset' });
   if (!process.env.UPSTASH_REDIS_REST_URL || !process.env.UPSTASH_REDIS_REST_TOKEN) {
     return res.status(500).json({ error: 'Upstash Redis env vars tidak diset' });
   }
@@ -39,34 +40,36 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'userId, sessionId, dan message wajib' });
   }
 
-  const history = createChatHistory();
-
   try {
+    // 1. Simpan fakta mentah: setiap pesan user disimpan ke list per userId.
+    const factsKey = `facts:${userId}`;
+    await redis.lpush(factsKey, message);
+    await redis.ltrim(factsKey, 0, 199); // batasi 200 fakta terakhir
+
+    // 2. Muat fakta yang tersimpan, sertakan sebagai konteks tambahan.
+    const facts = await redis.lrange(factsKey, 0, 49);
+    const factsBlock = facts.length
+      ? "Fakta yang pengguna pernah sampaikan:\n" + facts.reverse().map(f => "- " + f).join("\n")
+      : "";
+
+    // 3. Muat riwayat chat dari AgentKit.
+    const history = createChatHistory();
     const saved = await history.getChat({ userId, sessionId });
     const priorMessages = saved ? saved.messages : [];
     const fullMessages = [...priorMessages, { role: 'user', content: message }];
 
-    const tools = createMemoryTools({ userId });
-
+    // 4. Panggil model dengan fakta sebagai bagian dari system prompt.
     const result = await generateText({
       model: pollinations.chatModel("openai"),
-      system: SYSTEM,
+      system: SYSTEM + (factsBlock ? "\n\n" + factsBlock : ""),
       messages: fullMessages,
-      tools,
-      stopWhen: stepCountIs(5),
     });
 
+    // 5. Simpan riwayat percakapan.
     const finalMessages = [...fullMessages, { role: 'assistant', content: result.text }];
-    await history.saveChat({
-      userId,
-      sessionId,
-      messages: finalMessages,
-      title: 'Aero Chat',
-    });
+    await history.saveChat({ userId, sessionId, messages: finalMessages, title: 'Aero Chat' });
 
-    return res.status(200).json({
-      choices: [{ message: { content: result.text } }],
-    });
+    return res.status(200).json({ choices: [{ message: { content: result.text } }] });
   } catch (e) {
     return res.status(500).json({ error: e.message || 'Proxy failure' });
   }
