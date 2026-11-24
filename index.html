@@ -30,7 +30,7 @@ textarea:focus{outline:2px solid var(--accent);outline-offset:-1px}
 #send:disabled{opacity:.5;cursor:default}
 #attach{font-size:20px;line-height:1;padding:0 14px;border-radius:12px}
 footer{text-align:center;color:var(--muted);font-size:12px;padding:0 12px 10px}
-.msg pre{background:var(--bg);border:1px solid var(--border);border-radius:10px;margin:8px 0;padding:10px 12px;overflow-x:auto;white-space:pre;font:13px/1.45 ui-monospace,Consolas,monospace;position:relative}
+.msg pre{background:var(--bg);border:1px solid var(--border);border-radius:10px;margin:8px 0;padding:10px 12px;overflow-x:auto;white-space:pre;white-space:pre-wrap;font:13px/1.45 ui-monospace,Consolas,monospace;position:relative}
 .msg .copy{position:absolute;top:6px;right:6px;font-size:12px;padding:2px 8px}
 </style>
 </head>
@@ -39,78 +39,138 @@ footer{text-align:center;color:var(--muted);font-size:12px;padding:0 12px 10px}
   <h1><span>◆</span> Aero Chat</h1>
   <button class="ghost" id="clear" type="button">Percakapan baru</button>
 </header>
-<main id="log" aria-live="polite"><p class="hint" id="hint">Tanya apa saja. Enter untuk kirim, Shift+Enter untuk baris baru.</p></main>
+
+<main id="log" aria-live="polite">
+  <p class="hint" id="hint">Tanya apa saja. Enter untuk kirim, Shift+Enter untuk baris baru.</p>
+</main>
+
 <div id="bar">
   <button class="ghost" id="attach" type="button" title="Lampirkan file">+</button>
   <input type="file" id="file" multiple hidden>
   <textarea id="in" rows="1" placeholder="Tulis pesan…"></textarea>
   <button id="send" type="button">Kirim</button>
 </div>
+
 <footer>Memori persisten via Upstash Redis. Tanpa API key di klien.</footer>
+
 <script>
 (function(){
-  var log=document.getElementById('log'),input=document.getElementById('in'),send=document.getElementById('send'),hint=document.getElementById('hint');
-  var busy=false,ctrl=null,pending=[];
+  var log=document.getElementById('log'),
+      input=document.getElementById('in'),
+      send=document.getElementById('send'),
+      hint=document.getElementById('hint');
+
+  var busy=false, ctrl=null, pending=[];
   var fileIn=document.getElementById('file');
+
+  function newSessionId(){
+    return 'sess_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2,8);
+  }
 
   function getIdentity(){
     var uid=localStorage.getItem('aero_user_id');
-    if(!uid){uid='user_'+Math.random().toString(36).slice(2,10);localStorage.setItem('aero_user_id',uid);}
+    if(!uid){
+      uid='user_'+Math.random().toString(36).slice(2,10);
+      localStorage.setItem('aero_user_id',uid);
+    }
     var sid=localStorage.getItem('aero_session_id');
-    if(!sid){sid='sess_'+Date.now().toString(36);localStorage.setItem('aero_session_id',sid);}
-    return {userId:uid,sessionId:sid};
+    if(!sid){
+      sid=newSessionId();
+      localStorage.setItem('aero_session_id',sid);
+    }
+    return {userId:uid, sessionId:sid};
   }
 
   function add(cls,text){
     if(hint){hint.remove();hint=null;}
-    var d=document.createElement('div');d.className='msg '+cls;d.textContent=text;
-    log.appendChild(d);log.scrollTop=log.scrollHeight;return d;
+    var d=document.createElement('div');
+    d.className='msg '+cls;
+    d.textContent=text;
+    log.appendChild(d);
+    log.scrollTop=log.scrollHeight;
+    return d;
   }
 
-  function render(el,text){
+  // ===== FIX: parsing code block & copy full content =====
+  function render(el, text){
     el.textContent='';
-    var parts=text.split('```');
-    parts.forEach(function(p,i){
+    if(!text) return;
+
+    // split by triple backticks, keep even/odd segments: odd segments are code blocks
+    var parts = String(text).split('
+');
+
+    for(var i=0;i<parts.length;i++){
+      var part = parts[i];
+
       if(i%2===0){
-        p=p.replace(i>0?/^\n/:/^$/,'').replace(i<parts.length-1?/\n$/:/^$/,'');
-        if(p)el.appendChild(document.createTextNode(p));
-        return;
+        // normal text segment
+        if(part){
+          // keep exactly as-is (no trimming that might remove lines)
+          el.appendChild(document.createTextNode(part));
+        }
+        continue;
       }
-      var nl=p.indexOf('\n');
-      var code=(nl>=0?p.slice(nl+1):p).replace(/\n$/,'');
+
+      // code block segment: can start with "lang\n<code>"
+      // We only want <code>, and we do NOT want to trim lines aggressively.
+      var newlineIndex = part.indexOf('\n');
+      var code;
+
+      if(newlineIndex === -1){
+        code = part; // no newline => entire segment treated as code
+      }else{
+        // if first line looks like language, discard first line only
+        // (e.g. "js\nconsole.log(1)")
+        code = part.slice(newlineIndex + 1);
+      }
+
+      // Remove ONE trailing newline that often comes from formatting, but do not nuke other lines.
+      if(code.endsWith('\n')) code = code.slice(0, -1);
+
       var pre=document.createElement('pre');
       var btn=document.createElement('button');
-      btn.type='button';btn.className='ghost copy';btn.textContent='Salin';
-      btn.addEventListener('click',function(){
-        navigator.clipboard.writeText(code).then(
-          function(){btn.textContent='Tersalin';setTimeout(function(){btn.textContent='Salin';},1500);},
-          function(){btn.textContent='Gagal';}
-        );
-      });
+      btn.type='button';
+      btn.className='ghost copy';
+      btn.textContent='Salin';
+
+      btn.addEventListener('click', function(c){
+        return function(){
+          navigator.clipboard.writeText(c).then(
+            function(){ btn.textContent='Tersalin'; setTimeout(function(){ btn.textContent='Salin'; }, 1500); },
+            function(){ btn.textContent='Gagal'; }
+          );
+        };
+      }(code));
+
       pre.appendChild(btn);
       pre.appendChild(document.createTextNode(code));
       el.appendChild(pre);
-    });
+    }
   }
 
   async function submit(){
     var text=input.value.trim();
-    if((!text&&!pending.length)||busy)return;
-    input.value='';input.style.height='auto';
-    busy=true;send.disabled=true;
-    
+    if((!text && !pending.length) || busy) return;
+
+    input.value='';
+    input.style.height='auto';
+    busy=true;
+    send.disabled=true;
+
     var fullMessage=text;
     var names=[];
     for(var i=0;i<pending.length;i++){
       names.push(pending[i].name);
-      fullMessage+="\n\n[Lampiran: "+pending[i].name+"]\n"+pending[i].text;
+      fullMessage += "\n\n[Lampiran: " + pending[i].name + "]\n" + pending[i].text;
     }
-    if(!fullMessage.trim())fullMessage='(lampiran kosong)';
-    
-    add('user',text+(names.length?(text?'\n':'')+'📎 '+names.join(', '):''));
+    if(!fullMessage.trim()) fullMessage='(lampiran kosong)';
+
+    add('user', text + (names.length ? (text ? '\n' : '') + '📎 ' + names.join(', ') : ''));
+
     pending=[];
-    
     var out=add('ai','Berpikir…');
+
     var ids=getIdentity();
     var controller=new AbortController();
     ctrl=controller;
@@ -120,11 +180,7 @@ footer{text-align:center;color:var(--muted);font-size:12px;padding:0 12px 10px}
         method:'POST',
         headers:{'Content-Type':'application/json'},
         signal:controller.signal,
-        body:JSON.stringify({
-          userId:ids.userId,
-          sessionId:ids.sessionId,
-          message:fullMessage
-        })
+        body:JSON.stringify({ userId:ids.userId, sessionId:ids.sessionId, message:fullMessage })
       });
 
       if(!resp.ok){
@@ -133,25 +189,30 @@ footer{text-align:center;color:var(--muted);font-size:12px;padding:0 12px 10px}
       }
 
       var data=await resp.json();
-      var reply=data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content;
-      if(!reply)throw {message:'Balasan kosong dari upstream'};
+      var reply = data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content;
+      if(!reply) throw {message:'Balasan kosong dari upstream'};
 
-      render(out,reply);
+      render(out, reply);
     }catch(e){
-      if(e.name==='AbortError'){out.remove();}
-      else{
+      if(e && e.name==='AbortError'){
         out.remove();
-        add('err','Gagal: '+((e&&e.message)||'kesalahan tidak diketahui'));
+      }else{
+        out.remove();
+        add('err','Gagal: '+((e && e.message) || 'kesalahan tidak diketahui'));
       }
     }
-    busy=false;send.disabled=false;input.focus();
+
+    busy=false;
+    send.disabled=false;
+    input.focus();
   }
 
-  document.getElementById('attach').addEventListener('click',function(){fileIn.click();});
+  document.getElementById('attach').addEventListener('click',function(){ fileIn.click(); });
 
   fileIn.addEventListener('change', async function(){
-    var files=Array.prototype.slice.call(fileIn.files);fileIn.value='';
-    
+    var files=Array.prototype.slice.call(fileIn.files);
+    fileIn.value='';
+
     for(var i=0;i<files.length;i++){
       var f=files[i];
       if(f.size>5*1024*1024){
@@ -160,15 +221,16 @@ footer{text-align:center;color:var(--muted);font-size:12px;padding:0 12px 10px}
       }
 
       if(f.name.toLowerCase().endsWith('.zip')){
-        add('user', '📦 Membaca arsip: ' + f.name + '...');
-        try {
+        add('user','📦 Membaca arsip: '+f.name+'...');
+        try{
           var zip = await JSZip.loadAsync(f);
           var combinedText = "";
           var fileCount = 0;
-          
+
           for (var filename in zip.files) {
             var entry = zip.files[filename];
             if (entry.dir) continue;
+
             if (filename.match(/\.(txt|md|csv|json|log|xml|html|css|js|ts|py|c|cpp|h|cs|java|rs|lua|yml|yaml|ini|cfg|sh|bat|asm|s)$/i)) {
               var content = await entry.async('string');
               combinedText += "\n\n[File dalam zip: " + filename + "]\n" + content;
@@ -179,53 +241,57 @@ footer{text-align:center;color:var(--muted);font-size:12px;padding:0 12px 10px}
               }
             }
           }
-          if (fileCount > 0) {
-            pending.push({name: f.name + ' (arsip)', text: combinedText});
-            add('user', '✅ Berhasil mengekstrak ' + fileCount + ' file teks dari ' + f.name);
-          } else {
-            add('err', 'Tidak ada file teks yang ditemukan di dalam ' + f.name);
+
+          if(fileCount>0){
+            pending.push({name: f.name+' (arsip)', text: combinedText});
+            add('user','✅ Berhasil mengekstrak '+fileCount+' file teks dari '+f.name);
+          }else{
+            add('err','Tidak ada file teks yang ditemukan di dalam '+f.name);
           }
-        } catch (e) {
-          add('err', 'Gagal membaca zip: ' + e.message);
+        }catch(e){
+          add('err','Gagal membaca zip: '+e.message);
         }
-      } else {
-        try {
+      }else{
+        try{
           var buffer = await f.arrayBuffer();
           var bytes = new Uint8Array(buffer);
-          
-          var isBinary = false;
-          for (var j = 0; j < Math.min(bytes.length, 100); j++) {
-            if (bytes[j] === 0) { isBinary = true; break; }
+
+          var isBinary=false;
+          for(var j=0;j<Math.min(bytes.length,100);j++){
+            if(bytes[j]===0){ isBinary=true; break; }
           }
 
-          if (isBinary) {
-            var strings = [];
-            var currentStr = "";
-            for (var k = 0; k < bytes.length; k++) {
-              var c = bytes[k];
-              if (c >= 32 && c <= 126) {
+          if(isBinary){
+            var strings=[];
+            var currentStr="";
+            for(var k=0;k<bytes.length;k++){
+              var c=bytes[k];
+              if(c>=32 && c<=126){
                 currentStr += String.fromCharCode(c);
-              } else {
-                if (currentStr.length >= 4) strings.push(currentStr);
-                currentStr = "";
+              }else{
+                if(currentStr.length>=4) strings.push(currentStr);
+                currentStr="";
               }
             }
-            if (currentStr.length >= 4) strings.push(currentStr);
-            
+            if(currentStr.length>=4) strings.push(currentStr);
+
             var extracted = strings.join("\n");
-            if (extracted.length > 0) {
-              pending.push({name: f.name + ' (biner)', text: "[Strings yang diekstrak dari file biner " + f.name + "]\n" + extracted});
-              add('user', '🔍 Mengekstrak strings dari biner: ' + f.name);
-            } else {
-              add('err', 'Tidak ada teks yang bisa diekstrak dari ' + f.name);
+            if(extracted.length>0){
+              pending.push({
+                name: f.name+' (biner)',
+                text: "[Strings yang diekstrak dari file biner "+f.name+"]\n"+extracted
+              });
+              add('user','🔍 Mengekstrak strings dari biner: '+f.name);
+            }else{
+              add('err','Tidak ada teks yang bisa diekstrak dari '+f.name);
             }
-          } else {
+          }else{
             var textContent = new TextDecoder("utf-8").decode(bytes);
             pending.push({name: f.name, text: textContent});
-            add('user', '📎 ' + f.name + ' (siap dikirim)');
+            add('user','📎 '+f.name+' (siap dikirim)');
           }
-        } catch (e) {
-          add('err', 'Gagal membaca ' + f.name + ': ' + e.message);
+        }catch(e){
+          add('err','Gagal membaca '+f.name+': '+e.message);
         }
       }
     }
@@ -234,7 +300,10 @@ footer{text-align:center;color:var(--muted);font-size:12px;padding:0 12px 10px}
   send.addEventListener('click',submit);
 
   input.addEventListener('keydown',function(e){
-    if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();submit();}
+    if(e.key==='Enter' && !e.shiftKey){
+      e.preventDefault();
+      submit();
+    }
   });
 
   input.addEventListener('input',function(){
@@ -243,12 +312,22 @@ footer{text-align:center;color:var(--muted);font-size:12px;padding:0 12px 10px}
   });
 
   document.getElementById('clear').addEventListener('click',function(){
-    if(ctrl)ctrl.abort();
-    busy=false;send.disabled=false;
+    if(ctrl) ctrl.abort();
+
+    busy=false;
+    send.disabled=false;
+    pending=[];
+
     localStorage.removeItem('aero_session_id');
+    localStorage.setItem('aero_session_id', newSessionId());
+
     log.innerHTML='';
-    hint=document.createElement('p');hint.className='hint';hint.textContent='Percakapan baru dimulai.';
+    hint=document.createElement('p');
+    hint.className='hint';
+    hint.textContent='Percakapan baru dimulai.';
     log.appendChild(hint);
+
+    input.focus();
   });
 })();
 </script>
