@@ -384,7 +384,15 @@ textarea::placeholder { color: var(--text-muted); }
           li.className = 'session-item' + (s.sessionId === currentSid ? ' active' : '');
           var date = new Date(s.updatedAt).toLocaleDateString('id-ID', { day: 'numeric', month: 'short' });
           li.innerHTML = `<span class="title">${s.title}</span><span class="date">${date}</span>`;
-          li.onclick = function(){ loadSession(s.sessionId); sidebar.classList.add('hidden'); };
+          
+          // PERBAIKAN: Hanya sembunyikan sidebar di layar kecil (mobile)
+          li.onclick = function(){ 
+            loadSession(s.sessionId); 
+            if (window.innerWidth <= 768) {
+              sidebar.classList.add('hidden'); 
+            }
+          };
+          
           sessionList.appendChild(li);
         });
       } else {
@@ -421,7 +429,12 @@ textarea::placeholder { color: var(--text-muted); }
     log.innerHTML = '<p class="hint" id="hint">Percakapan baru dimulai.</p>';
     hint = document.getElementById('hint');
     loadSessions();
-    sidebar.classList.add('hidden');
+    
+    // PERBAIKAN: Hanya sembunyikan sidebar di layar kecil (mobile)
+    if (window.innerWidth <= 768) {
+      sidebar.classList.add('hidden');
+    }
+    
     input.focus();
   };
 
