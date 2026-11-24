@@ -27,9 +27,6 @@ textarea{flex:1;resize:none;max-height:140px;background:var(--surface);color:var
 textarea:focus{outline:2px solid var(--accent);outline-offset:-1px}
 #send{background:var(--accent);color:#fff;border:0;border-radius:12px;padding:0 18px;font-weight:600}
 #send:disabled{opacity:.5;cursor:default}
-#chips{display:flex;flex-wrap:wrap;gap:6px;padding:0 16px;max-width:760px;width:100%;margin:0 auto}
-.chip{background:var(--user);border:1px solid var(--border);border-radius:999px;padding:3px 10px;font-size:13px;cursor:pointer}
-#attach{font-size:20px;line-height:1;padding:0 14px;border-radius:12px}
 footer{text-align:center;color:var(--muted);font-size:12px;padding:0 12px 10px}
 .msg pre{background:var(--bg);border:1px solid var(--border);border-radius:10px;margin:8px 0;padding:10px 12px;overflow-x:auto;white-space:pre;font:13px/1.45 ui-monospace,Consolas,monospace;position:relative}
 .msg .copy{position:absolute;top:6px;right:6px;font-size:12px;padding:2px 8px}
@@ -41,25 +38,23 @@ footer{text-align:center;color:var(--muted);font-size:12px;padding:0 12px 10px}
   <button class="ghost" id="clear" type="button">Percakapan baru</button>
 </header>
 <main id="log" aria-live="polite"><p class="hint" id="hint">Tanya apa saja. Enter untuk kirim, Shift+Enter untuk baris baru.</p></main>
-<div id="chips"></div>
 <div id="bar">
-  <button class="ghost" id="attach" type="button" title="Lampirkan file teks">+</button>
-  <input type="file" id="file" multiple hidden accept=".txt,.md,.csv,.json,.log,.xml,.html,.css,.js,.ts,.py,.c,.cpp,.h,.cs,.java,.rs,.lua,.yml,.yaml,.ini,.cfg">
   <textarea id="in" rows="1" placeholder="Tulis pesan…"></textarea>
   <button id="send" type="button">Kirim</button>
 </div>
-<footer>KeylessAI via Vercel proxy. Tanpa API key, tanpa limit dari sisi klien.</footer>
+<footer>Memori persisten via Upstash Redis. Tanpa API key di klien.</footer>
 <script>
 (function(){
   var log=document.getElementById('log'),input=document.getElementById('in'),send=document.getElementById('send'),hint=document.getElementById('hint');
-  var history=[],busy=false,ctrl=null,pending=[];
-  var chips=document.getElementById('chips'),fileIn=document.getElementById('file');
-  var MAX_TEXT=200000;
-  var SYSTEM="Kamu Aero, reverse engineer dan programmer sistem game yang senior. "+
-  "Jawab dalam bahasa yang dipakai pengguna. Jangan mengarang offset, signature, atau layout struktur: "+
-  "pakai hanya data yang diberikan pengguna, selebihnya tandai sebagai belum diketahui dan beri cara mencarinya. "+
-  "Jangan klaim kode sudah dikompilasi atau diuji. Jawab langsung ke inti.";
-  var MAX_TURNS=24;
+  var busy=false,ctrl=null;
+
+  function getIdentity(){
+    var uid=localStorage.getItem('aero_user_id');
+    if(!uid){uid='user_'+Math.random().toString(36).slice(2,10);localStorage.setItem('aero_user_id',uid);}
+    var sid=localStorage.getItem('aero_session_id');
+    if(!sid){sid='sess_'+Date.now().toString(36);localStorage.setItem('aero_session_id',sid);}
+    return {userId:uid,sessionId:sid};
+  }
 
   function add(cls,text){
     if(hint){hint.remove();hint=null;}
@@ -93,28 +88,15 @@ footer{text-align:center;color:var(--muted);font-size:12px;padding:0 12px 10px}
     });
   }
 
-  function transcript(){
-    var start=Math.max(0,history.length-1-MAX_TURNS);
-    var t=SYSTEM+"\n\n=== Riwayat ===\n";
-    for(var i=start;i<history.length-1;i++){
-      t+=(history[i].role==='user'?'[Pengguna]':'[Asisten]')+"\n"+history[i].content+"\n\n";
-    }
-    return t+"=== Pesan terbaru ===\n"+history[history.length-1].content;
-  }
-
   async function submit(){
     var text=input.value.trim();
-    if((!text&&!pending.length)||busy)return;
+    if(!text||busy)return;
     input.value='';input.style.height='auto';
     busy=true;send.disabled=true;
-    var atts=pending;pending=[];renderChips();
-    var full=text,names=[];
-    for(var i=0;i<atts.length;i++){var a=atts[i];names.push(a.name);if(a.kind==='text')full+="\n\n[File: "+a.name+"]\n"+a.text;}
-    if(!full.trim())full='(lampiran)';
-    history.push({role:'user',content:full});
-    add('user',text+(names.length?(text?'\n':'')+'📎 '+names.join(', '):''));
+    add('user',text);
     var out=add('ai','Berpikir…');
 
+    var ids=getIdentity();
     var controller=new AbortController();
     ctrl=controller;
 
@@ -124,9 +106,9 @@ footer{text-align:center;color:var(--muted);font-size:12px;padding:0 12px 10px}
         headers:{'Content-Type':'application/json'},
         signal:controller.signal,
         body:JSON.stringify({
-          model:'gpt-4o',
-          messages:[{role:'user',content:transcript()}],
-          stream:false
+          userId:ids.userId,
+          sessionId:ids.sessionId,
+          message:text
         })
       });
 
@@ -140,42 +122,15 @@ footer{text-align:center;color:var(--muted);font-size:12px;padding:0 12px 10px}
       if(!reply)throw {message:'Balasan kosong dari upstream'};
 
       render(out,reply);
-      history.push({role:'assistant',content:reply});
     }catch(e){
       if(e.name==='AbortError'){out.remove();}
       else{
         out.remove();
         add('err','Gagal: '+((e&&e.message)||'kesalahan tidak diketahui'));
       }
-      history.pop();
     }
     busy=false;send.disabled=false;input.focus();
   }
-
-  function renderChips(){
-    chips.innerHTML='';
-    pending.forEach(function(a,i){
-      var c=document.createElement('span');c.className='chip';c.textContent=a.name+' ✕';
-      c.addEventListener('click',function(){pending.splice(i,1);renderChips();});
-      chips.appendChild(c);
-    });
-  }
-
-  document.getElementById('attach').addEventListener('click',function(){fileIn.click();});
-
-  fileIn.addEventListener('change',async function(){
-    var files=Array.prototype.slice.call(fileIn.files);fileIn.value='';
-    for(var i=0;i<files.length;i++){
-      var f=files[i];
-      if(f.size>MAX_TEXT){add('err',f.name+' terlalu besar (maks 200 KB).');continue;}
-      try{
-        var t=await f.text();
-        if(t.indexOf('\u0000')!==-1){add('err',f.name+' bukan file teks.');continue;}
-        pending.push({kind:'text',name:f.name,text:t});
-      }catch(e){add('err','Gagal membaca '+f.name);}
-    }
-    renderChips();
-  });
 
   send.addEventListener('click',submit);
 
@@ -191,7 +146,10 @@ footer{text-align:center;color:var(--muted);font-size:12px;padding:0 12px 10px}
   document.getElementById('clear').addEventListener('click',function(){
     if(ctrl)ctrl.abort();
     busy=false;send.disabled=false;
-    history=[];log.innerHTML='';
+    // Hapus sessionId agar percakapan baru dimulai dengan konteks kosong.
+    // userId tetap, jadi memori jangka panjang (fakta tentang pengguna) masih terbawa.
+    localStorage.removeItem('aero_session_id');
+    log.innerHTML='';
     hint=document.createElement('p');hint.className='hint';hint.textContent='Percakapan baru dimulai.';
     log.appendChild(hint);
   });
